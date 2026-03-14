@@ -9,7 +9,7 @@ cutoff_hz   = 2;    % cutoff frequency in Hz — lower = smoother, adjust as nee
 filter_order = 3;   % Butterworth filter order — higher = sharper cutoff
 
 %% ── Load Data ───────────────────────────────────────────────────────────────
-data = readtable('imu_log_sysidtest.csv');
+data = readtable('imu_log_imuonlytest3.csv');
 
 % Parse timestamps and compute sample rate
 timestamps = datetime(data.timestamp, 'InputFormat', 'yyyy-MM-dd HH:mm:ss');
@@ -67,5 +67,5 @@ end
 filtered = table(data.timestamp, ax_f, ay_f, az_f, gx_f, gy_f, gz_f, ...
     'VariableNames', {'timestamp','ax','ay','az','gx','gy','gz'});
 
-writetable(filtered, 'imu_log_filtered.csv');
-fprintf('Filtered data saved to imu_log_filtered.csv\n');
+writetable(filtered, 'imuonly_trial3_filtered.csv');
+fprintf('Filtered data saved!\n');

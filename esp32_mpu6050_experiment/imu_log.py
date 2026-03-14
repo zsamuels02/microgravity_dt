@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 
 url = "http://192.168.4.1/data"
-filename = "imu_log_sysidtest.csv"
+filename = "imu_log_heavyt1.csv"
 
 print(f"Logging to {filename} — press Ctrl+C to stop")
 
