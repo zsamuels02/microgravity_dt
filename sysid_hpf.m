@@ -9,17 +9,18 @@ cutoff_hz   = 2;    % cutoff frequency in Hz — lower = smoother, adjust as nee
 filter_order = 3;   % Butterworth filter order — higher = sharper cutoff
 
 %% ── Load Data ───────────────────────────────────────────────────────────────
-data = readtable('imu_log_imuonlytest3.csv');
+data = readtable('imu_log_SELFTEST.csv');
 
 % Parse timestamps and compute sample rate
-timestamps = datetime(data.timestamp, 'InputFormat', 'yyyy-MM-dd HH:mm:ss');
-fs = 10;   % Hz — 100ms delay in Arduino loop = 10 samples per second
-fprintf('Sample rate: %.1f Hz\n', fs);
+timestamps = datetime(data.timestamp, 'InputFormat', 'yyyy-MM-dd HH:mm:ss.SSSSSS');
+dt = seconds(diff(timestamps));
+fs = 1 / mean(dt);
+fprintf('Detected sample rate: %.1f Hz\n', fs);
 
 % Extract signals
 ax = data.ax;  ay = data.ay;  az = data.az;
 gx = data.gx;  gy = data.gy;  gz = data.gz;
-t  = (0:height(data)-1)' / fs;   % time vector in seconds
+t = seconds(timestamps - timestamps(1));   % time vector derived directly from timestamps
 
 %% ── Design Butterworth Low Pass Filter ──────────────────────────────────────
 nyquist = fs / 2;
@@ -63,9 +64,9 @@ for i = 1:3
     legend; grid on;
 end
 
-%% ── Save Filtered Data to CSV ────────────────────────────────────────────────
-filtered = table(data.timestamp, ax_f, ay_f, az_f, gx_f, gy_f, gz_f, ...
-    'VariableNames', {'timestamp','ax','ay','az','gx','gy','gz'});
-
-writetable(filtered, 'imuonly_trial3_filtered.csv');
-fprintf('Filtered data saved!\n');
+% %% ── Save Filtered Data to CSV ────────────────────────────────────────────────
+% filtered = table(data.timestamp, ax_f, ay_f, az_f, gx_f, gy_f, gz_f, ...
+%     'VariableNames', {'timestamp','ax','ay','az','gx','gy','gz'});
+% 
+% writetable(filtered, 'imuonly_trial3_filtered.csv');
+% fprintf('Filtered data saved!\n');
