@@ -102,12 +102,14 @@ void setup() {
   Serial.begin(115200);
 
   Wire.begin(8, 9);  // SDA=IO8, SCL=IO9 — adjust if needed
+  Wire.setClock(400000); // reading at 400kHz
 
   if (!mpu.begin()) {
     Serial.println("MPU6050 init failed — check wiring!");
     while (1) yield();
   }
   Serial.println("MPU6050 found");
+  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
 
   WiFi.softAP(AP_SSID, AP_PASS);
   Serial.print("AP IP: ");
@@ -133,6 +135,4 @@ void loop() {
 
   Serial.printf("Accel  X:%.1f  Y:%.1f  Z:%.1f m/s²\n", imuData.ax, imuData.ay, imuData.az);
   Serial.printf("Gyro   X:%.1f  Y:%.1f  Z:%.1f rps\n",  imuData.gx, imuData.gy, imuData.gz);
-
-  delay(100);
 }
