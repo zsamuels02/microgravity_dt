@@ -24,7 +24,6 @@
 #include <esp_now.h>
 #include <LittleFS.h>
 #include <Adafruit_LSM6DSOX.h>
-Adafruit_LSM6DSOX lsm6ds;
 #include <Adafruit_LIS3MDL.h>
 #include <Adafruit_MCP9808.h>
 #include <Adafruit_NeoPixel.h>
@@ -39,7 +38,7 @@ Adafruit_LSM6DSOX lsm6ds;
 #define BATTERY_DIVIDER  2.0f
 #define ADC_REF_V        3.3f
 #define ADC_RESOLUTION   4095.0f
-#define CMD_LOWPOWER  5
+#define CMD_LOWPOWER      5
 
 // ── Sensor addresses ──────────────────────────────────────────
 #define LSM6DS3_ADDR  0x6A
@@ -53,6 +52,16 @@ Adafruit_LSM6DSOX lsm6ds;
 #define FREEFALL_THRESHOLD_G  0.15f
 #define ESPNOW_SEND_EVERY_N   4
 
+// ── Calibration ───────────────────────────────────────────────
+// Hard-coded accel biases (in g) — measured with board flat, facing up.
+// Replace these values with your measured offsets.
+#define ACCEL_BIAS_X   0.0f   // <-- replace
+#define ACCEL_BIAS_Y   0.0f   // <-- replace
+#define ACCEL_BIAS_Z   0.058222f   // <-- replace
+
+// Number of samples to average during gyro cal on boot (~3s at 2ms/sample)
+#define GYRO_CAL_SAMPLES  500
+
 // ── Storage ───────────────────────────────────────────────────
 #define LOG_FILE     "/drop_log.csv"
 
@@ -64,8 +73,7 @@ Adafruit_LSM6DSOX lsm6ds;
 // ── Ground station MAC — paste yours here ─────────────────────
 uint8_t GROUND_STATION_MAC[] = {0xB0, 0xCB, 0xD8, 0xCD, 0xCD, 0x1C};
 
-// ── Structs — ALL defined before any variables or functions ───
-
+// ── Structs ───────────────────────────────────────────────────
 struct ImuFrame {
   float    ax, ay, az;
   float    gx, gy, gz;
@@ -92,22 +100,24 @@ typedef struct {
 } CommandPacket;
 
 // ── Global objects ────────────────────────────────────────────
+Adafruit_LSM6DSOX   lsm6ds;
 Adafruit_LIS3MDL    lis3mdl;
 Adafruit_MCP9808    mcp9808;
 Adafruit_NeoPixel   pixel(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // ── Global variables ──────────────────────────────────────────
 ImuFrame      latest;
-volatile bool logging        = false;
+float         gx_bias = 0.0f, gy_bias = 0.0f, gz_bias = 0.0f;
+volatile bool logging      = false;
 volatile bool lowPowerMode = false;
-bool          mcp9808_ok     = false;
-float         ambientTempC   = 0.0f;
+bool          mcp9808_ok   = false;
+float         ambientTempC = 0.0f;
 uint32_t      lastMcpReadMs  = 0;
 unsigned long lastSampleUs   = 0;
 uint32_t      sampleCount    = 0;
 uint8_t       espnowCounter  = 0;
 File          logFile;
-portMUX_TYPE  imuMux         = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE  imuMux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t  peripheralTaskHandle = NULL;
 esp_now_peer_info_t peerInfo;
 
@@ -127,14 +137,13 @@ float readBatteryVoltage() {
   return (raw / 8.0f) * (ADC_REF_V / ADC_RESOLUTION) * BATTERY_DIVIDER;
 }
 
-// ── ESP32 temperature sensor ──────────────────────────────
+// ── ESP32 internal temperature ────────────────────────────────
 void esp32_temp_init() {
-  // No init needed in ESP32 core v3.x
   Serial.println("ESP32 temp sensor OK");
 }
 
 float readESP32Temp() {
-  return temperatureRead();  // built-in, no library needed
+  return temperatureRead();
 }
 
 // ── ESP-NOW callbacks ─────────────────────────────────────────
@@ -146,7 +155,7 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != sizeof(CommandPacket)) return;
   CommandPacket cmd;
   memcpy(&cmd, data, sizeof(cmd));
-  
+
   switch (cmd.cmd) {
     case CMD_START:
       if (!logging) {
@@ -177,21 +186,21 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
     case CMD_LOWPOWER:
       lowPowerMode = !lowPowerMode;
       if (lowPowerMode) {
-      lsm6ds.setAccelDataRate(LSM6DS_RATE_52_HZ);
-      lsm6ds.setGyroDataRate(LSM6DS_RATE_52_HZ);
-      ledRed();
-      Serial.println("CMD: Low power mode ON");
+        lsm6ds.setAccelDataRate(LSM6DS_RATE_52_HZ);
+        lsm6ds.setGyroDataRate(LSM6DS_RATE_52_HZ);
+        ledRed();
+        Serial.println("CMD: Low power mode ON");
       } else {
-    lsm6ds.setAccelDataRate(LSM6DS3_ODR);
-    lsm6ds.setGyroDataRate(LSM6DS3_ODR);
-    ledGreen();
-    Serial.println("CMD: Low power mode OFF");
-  }
-  break;
+        lsm6ds.setAccelDataRate(LSM6DS3_ODR);
+        lsm6ds.setGyroDataRate(LSM6DS3_ODR);
+        ledGreen();
+        Serial.println("CMD: Low power mode OFF");
+      }
+      break;
   }
 }
 
-// ── IMU ───────────────────────────────────────────────────────
+// ── IMU init ──────────────────────────────────────────────────
 void imu_init() {
   Wire.beginTransmission(LSM6DS3_ADDR);
   Wire.write(0x0F);
@@ -222,6 +231,7 @@ void imu_init() {
   }
 }
 
+// ── IMU read ──────────────────────────────────────────────────
 void read_raw(float &ax, float &ay, float &az,
               float &gx, float &gy, float &gz, float &temp) {
   sensors_event_t accel_evt, gyro_evt, temp_evt;
@@ -239,17 +249,35 @@ ImuFrame read_imu() {
   float ax, ay, az, gx, gy, gz, temp;
   read_raw(ax, ay, az, gx, gy, gz, temp);
   ImuFrame f;
-  f.ax       = ax;
-  f.ay       = ay;
-  f.az       = az;
-  f.gx       = gx;
-  f.gy       = gy;
-  f.gz       = gz;
-  f.temp     = temp;
-  f.ts_ms    = millis();
+  f.ax    = ax - ACCEL_BIAS_X;
+  f.ay    = ay - ACCEL_BIAS_Y;
+  f.az    = az - ACCEL_BIAS_Z;
+  f.gx    = gx - gx_bias;
+  f.gy    = gy - gy_bias;
+  f.gz    = gz - gz_bias;
+  f.temp  = temp;
+  f.ts_ms = millis();
   float mag  = sqrt(f.ax*f.ax + f.ay*f.ay + f.az*f.az);
   f.freefall = (mag < FREEFALL_THRESHOLD_G);
   return f;
+}
+
+// ── Gyro calibration ──────────────────────────────────────────
+void calibrate_gyro() {
+  Serial.println("Gyro cal: keep still for ~3s...");
+  double sx = 0, sy = 0, sz = 0;
+  float ax, ay, az, gx, gy, gz, temp;
+  // Discard first 50 samples to let sensor settle
+  for (int i = 0; i < 50; i++) { read_raw(ax, ay, az, gx, gy, gz, temp); delay(2); }
+  for (int i = 0; i < GYRO_CAL_SAMPLES; i++) {
+    read_raw(ax, ay, az, gx, gy, gz, temp);
+    sx += gx; sy += gy; sz += gz;
+    delay(2);
+  }
+  gx_bias = sx / GYRO_CAL_SAMPLES;
+  gy_bias = sy / GYRO_CAL_SAMPLES;
+  gz_bias = sz / GYRO_CAL_SAMPLES;
+  Serial.printf("Gyro bias — X:%.4f Y:%.4f Z:%.4f dps\n", gx_bias, gy_bias, gz_bias);
 }
 
 // ── MCP9808 ───────────────────────────────────────────────────
@@ -272,7 +300,7 @@ void mcp9808_update() {
   ambientTempC = mcp9808.readTempC();
 }
 
-// ── Core 0 task ───────────────────────────────────────────────
+// ── Core 0 peripheral task ────────────────────────────────────
 void peripheralTask(void* pvParameters) {
   vTaskDelay(pdMS_TO_TICKS(100));
   for (;;) {
@@ -306,6 +334,7 @@ void setup() {
   Serial.printf("  %d device(s) found\n", found);
 
   imu_init();
+  calibrate_gyro();
   mcp9808_init();
   esp32_temp_init();
 
@@ -338,6 +367,7 @@ void setup() {
     &peripheralTaskHandle, 0
   );
 
+  ledGreen();
   Serial.println("Ready. Waiting for START command from ground station.");
 }
 
@@ -370,25 +400,24 @@ void loop() {
   }
 
   espnowCounter++;
-  // Was: if (espnowCounter >= ESPNOW_SEND_EVERY_N)
-if (espnowCounter >= (lowPowerMode ? ESPNOW_SEND_EVERY_N * 4 : ESPNOW_SEND_EVERY_N)) {
+  if (espnowCounter >= (lowPowerMode ? ESPNOW_SEND_EVERY_N * 4 : ESPNOW_SEND_EVERY_N)) {
     espnowCounter = 0;
 
     TelemetryPacket pkt;
-    pkt.ts_ms            = f.ts_ms;
-    pkt.ax               = f.ax;
-    pkt.ay               = f.ay;
-    pkt.az               = f.az;
-    pkt.gx               = f.gx;
-    pkt.gy               = f.gy;
-    pkt.gz               = f.gz;
-    pkt.imu_temp         = f.temp;
-    pkt.ambient_temp     = ambientSnap;
-    pkt.freefall         = f.freefall ? 1 : 0;
-    pkt.logging          = logging     ? 1 : 0;
-    pkt.sample_count     = sampleCount;
-    pkt.battery_v        = readBatteryVoltage();
-    pkt.esp32_temp       = readESP32Temp();
+    pkt.ts_ms        = f.ts_ms;
+    pkt.ax           = f.ax;
+    pkt.ay           = f.ay;
+    pkt.az           = f.az;
+    pkt.gx           = f.gx;
+    pkt.gy           = f.gy;
+    pkt.gz           = f.gz;
+    pkt.imu_temp     = f.temp;
+    pkt.ambient_temp = ambientSnap;
+    pkt.freefall     = f.freefall ? 1 : 0;
+    pkt.logging      = logging    ? 1 : 0;
+    pkt.sample_count = sampleCount;
+    pkt.battery_v    = readBatteryVoltage();
+    pkt.esp32_temp   = readESP32Temp();
 
     esp_now_send(GROUND_STATION_MAC, (uint8_t *)&pkt, sizeof(pkt));
   }
