@@ -9,7 +9,8 @@
  *    - Adafruit MCP9808
  *    - Adafruit BusIO
  *    - Adafruit NeoPixel
- *    - LittleFS (built into ESP32 Arduino core)
+ *    - SD (built into ESP32 Arduino core)
+ *    - SPI (built into ESP32 Arduino core)
  *
  *  LED STATUS (onboard NeoPixel, GPIO 0):
  *    Red    — booting / not ready
@@ -22,7 +23,8 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <esp_now.h>
-#include <LittleFS.h>
+#include <SD.h>
+#include <SPI.h>
 #include <Adafruit_LSM6DSOX.h>
 #include <Adafruit_LIS3MDL.h>
 #include <Adafruit_MCP9808.h>
@@ -38,6 +40,7 @@
 #define BATTERY_DIVIDER  2.0f
 #define ADC_REF_V        3.3f
 #define ADC_RESOLUTION   4095.0f
+#define SD_CS_PIN         33
 #define CMD_LOWPOWER      5
 
 // ── Sensor addresses ──────────────────────────────────────────
@@ -159,7 +162,7 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   switch (cmd.cmd) {
     case CMD_START:
       if (!logging) {
-        logFile = LittleFS.open(LOG_FILE, FILE_APPEND);
+        logFile = SD.open(LOG_FILE, FILE_APPEND);
         if (logFile) {
           if (logFile.size() == 0)
             logFile.println("ts_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,imu_temp_c,ambient_temp_c,freefall");
@@ -179,7 +182,7 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
       break;
     case CMD_CLEAR:
       if (logging) { logging = false; logFile.close(); }
-      LittleFS.remove(LOG_FILE);
+      SD.remove(LOG_FILE);
       sampleCount = 0;
       Serial.println("CMD: Log cleared");
       break;
@@ -338,10 +341,11 @@ void setup() {
   mcp9808_init();
   esp32_temp_init();
 
-  if (!LittleFS.begin(true)) {
-    Serial.println("ERROR: LittleFS mount failed!");
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("ERROR: SD card mount failed! Check wiring and card.");
     while (1) delay(1000);
   }
+  Serial.println("SD card OK");
 
   WiFi.mode(WIFI_STA);
   Serial.print("DV MAC: "); Serial.println(WiFi.macAddress());

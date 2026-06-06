@@ -11,9 +11,9 @@
 %    Saves drop_log.csv to the same folder as this script
 % =========================================================
 
-COM_PORT  = 'COM9';       % <-- change to your port
+COM_PORT  = 'COM9';       % <-- change to ywour port
 BAUD_RATE = 115200;
-LOG_FILE  = ['drop_log_' char(datetime('now', 'Format', 'yyyy-MM-dd_HH-mm-ss')) '.csv'];  
+LOG_FILE  = ['friday_drop_log_' char(datetime('now', 'Format', 'yyyy-MM-dd_HH-mm-ss')) '.csv'];  
 
 % LiPo battery voltage thresholds
 BATT_FULL  = 4.2;   % V
